@@ -51,10 +51,41 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
+ensure_fail2ban() {
+    if [ ! -f /var/lib/fail2ban/fail2ban.sqlite3 ]; then
+        echo ""
+        if [ "$INSTALL_LANG" = "de" ]; then
+            echo "FEHLER: Die fail2ban-Datenbank (/var/lib/fail2ban/fail2ban.sqlite3) wurde nicht gefunden."
+            echo "        Bitte installiere und starte fail2ban, bevor du das Skript erneut ausfuehrst:"
+            echo "        sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban"
+        else
+            echo "ERROR: The fail2ban database (/var/lib/fail2ban/fail2ban.sqlite3) was not found."
+            echo "       Please install and start fail2ban before rerunning this script:"
+            echo "       sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban"
+        fi
+        exit 1
+    fi
+    if [ ! -S /var/run/fail2ban/fail2ban.sock ] && [ ! -e /var/run/fail2ban/fail2ban.sock ]; then
+        echo ""
+        if [ "$INSTALL_LANG" = "de" ]; then
+            echo "FEHLER: Der fail2ban-Socket (/var/run/fail2ban/fail2ban.sock) wurde nicht gefunden."
+            echo "        Bitte installiere und starte fail2ban, bevor du das Skript erneut ausfuehrst:"
+            echo "        sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban"
+        else
+            echo "ERROR: The fail2ban socket (/var/run/fail2ban/fail2ban.sock) was not found."
+            echo "       Please install and start fail2ban before rerunning this script:"
+            echo "       sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban"
+        fi
+        exit 1
+    fi
+}
+
+ensure_fail2ban
+
 if [ "$INSTALL_LANG" = "de" ]; then
-    echo "[OK] Docker und Docker Compose gefunden."
+    echo "[OK] Docker, Docker Compose und fail2ban gefunden."
 else
-    echo "[OK] Docker and Docker Compose found."
+    echo "[OK] Docker, Docker Compose, and fail2ban found."
 fi
 echo ""
 
@@ -131,14 +162,7 @@ if [ -f .env ]; then
         fi
 
         # Ensure fail2ban paths exist
-        if [ ! -f /var/lib/fail2ban/fail2ban.sqlite3 ]; then
-            mkdir -p /var/lib/fail2ban
-            touch /var/lib/fail2ban/fail2ban.sqlite3
-        fi
-        if [ ! -S /var/run/fail2ban/fail2ban.sock ] && [ ! -e /var/run/fail2ban/fail2ban.sock ]; then
-            mkdir -p /var/run/fail2ban
-            touch /var/run/fail2ban/fail2ban.sock
-        fi
+        ensure_fail2ban
 
         echo ""
         if [ "$INSTALL_LANG" = "de" ]; then
@@ -379,24 +403,7 @@ else
 fi
 
 # Ensure fail2ban paths exist (VstPBX reads them read-only if available)
-if [ ! -f /var/lib/fail2ban/fail2ban.sqlite3 ]; then
-    mkdir -p /var/lib/fail2ban
-    touch /var/lib/fail2ban/fail2ban.sqlite3
-    if [ "$INSTALL_LANG" = "de" ]; then
-        echo "[OK] Leeren fail2ban-Datenbank-Platzhalter erstellt"
-    else
-        echo "[OK] Created empty fail2ban database placeholder"
-    fi
-fi
-if [ ! -S /var/run/fail2ban/fail2ban.sock ] && [ ! -e /var/run/fail2ban/fail2ban.sock ]; then
-    mkdir -p /var/run/fail2ban
-    touch /var/run/fail2ban/fail2ban.sock
-    if [ "$INSTALL_LANG" = "de" ]; then
-        echo "[OK] fail2ban-Socket-Platzhalter erstellt"
-    else
-        echo "[OK] Created fail2ban socket placeholder"
-    fi
-fi
+ensure_fail2ban
 
 # Pre-pull helper image for web-based updates
 echo ""
