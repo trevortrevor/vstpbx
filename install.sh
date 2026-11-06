@@ -170,7 +170,6 @@ if [ -f .env ]; then
         else
             echo "Restarting containers..."
         fi
-        docker pull docker:cli >/dev/null 2>&1 &
         docker compose up -d --build
 
         # Detect local LAN IP
@@ -404,15 +403,6 @@ fi
 
 # Ensure fail2ban paths exist (VstPBX reads them read-only if available)
 ensure_fail2ban
-
-# Pre-pull helper image for web-based updates
-echo ""
-if [ "$INSTALL_LANG" = "de" ]; then
-    echo "Bereite Update-System vor..."
-else
-    echo "Preparing update system..."
-fi
-docker pull docker:cli >/dev/null 2>&1 &
 
 # Start containers
 echo ""

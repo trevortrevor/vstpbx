@@ -628,23 +628,10 @@ def write_extensions_config(routes: List[InboundRoute], forwards: Optional[List[
 
 
 def reload_dialplan() -> bool:
-    """Reload Asterisk dialplan"""
-    try:
-        result = subprocess.run(
-            ['docker', 'exec', 'pbx_asterisk', 'sh', '-c',
-             'cp /etc/asterisk/custom/extensions.conf /etc/asterisk/extensions.conf && asterisk -rx "dialplan reload"'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode == 0:
-            logger.info("Asterisk dialplan reloaded successfully")
-            return True
-        else:
-            logger.error(f"Dialplan reload failed: {result.stderr}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Failed to reload dialplan: {e}")
-        return False
+    """Reload Asterisk dialplan via AMI"""
+    from ami_client import run_ami_command
+    if run_ami_command("dialplan reload"):
+        logger.info("Asterisk dialplan reloaded successfully via AMI")
+        return True
+    logger.error("Dialplan reload failed via AMI")
+    return False

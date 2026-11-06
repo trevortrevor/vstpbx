@@ -664,33 +664,57 @@ def _get_memory_usage() -> dict:
 
 
 def _get_container_status() -> list:
-    """Get Docker container statuses."""
-    try:
-        result = subprocess.run(
-            ["docker", "compose", "ps", "--format", "json"],
-            capture_output=True, text=True, timeout=10,
-            cwd="/project"
-        )
-        if result.returncode != 0:
-            return []
-        containers = []
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
-                continue
-            try:
-                c = json.loads(line)
-                containers.append({
-                    "name": c.get("Name", ""),
-                    "service": c.get("Service", ""),
-                    "state": c.get("State", ""),
-                    "status": c.get("Status", ""),
-                })
-            except json.JSONDecodeError:
-                continue
-        return containers
-    except Exception as e:
-        logger.warning(f"Failed to get container status: {e}")
-        return []
+    """Get service statuses via internal network and AMI health checks."""
+    import socket
+    from sqlalchemy import text
+    from database import engine
+    from ami_client import run_ami_command
+
+    def _tcp_alive(host: str, port: int) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=2.0):
+                return True
+        except Exception:
+            return False
+
+    def _db_alive() -> bool:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
+
+    asterisk_ok = run_ami_command("core show version", timeout=2.0)
+    frontend_ok = _tcp_alive("frontend", 80)
+    postgres_ok = _db_alive()
+
+    return [
+        {
+            "name": "pbx_asterisk",
+            "service": "asterisk",
+            "state": "running" if asterisk_ok else "exited",
+            "status": "Up (AMI OK)" if asterisk_ok else "Unreachable",
+        },
+        {
+            "name": "pbx_backend",
+            "service": "backend",
+            "state": "running",
+            "status": "Up",
+        },
+        {
+            "name": "pbx_frontend",
+            "service": "frontend",
+            "state": "running" if frontend_ok else "exited",
+            "status": "Up" if frontend_ok else "Unreachable",
+        },
+        {
+            "name": "pbx_postgres",
+            "service": "postgres",
+            "state": "running" if postgres_ok else "exited",
+            "status": "Up (healthy)" if postgres_ok else "Unreachable",
+        },
+    ]
 
 
 @router.get("/server-info")
@@ -764,29 +788,21 @@ def restart_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Restart a specific Docker service."""
-    allowed = {"asterisk", "backend", "frontend"}
-    if data.service not in allowed:
-        raise HTTPException(status_code=400, detail=f"Ungültiger Service: {data.service}")
-
-    try:
-        result = subprocess.run(
-            ["docker", "compose", "restart", data.service],
-            capture_output=True, text=True, timeout=60,
-            cwd="/project"
+    """Restart Asterisk via AMI."""
+    if data.service != "asterisk":
+        raise HTTPException(
+            status_code=400,
+            detail="Nur der Asterisk-Service kann über die Weboberfläche (via AMI) neu gestartet werden.",
         )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Neustart fehlgeschlagen: {result.stderr}")
-        logger.info(f"Service {data.service} restarted by {current_user.username}")
-        log_action(db, current_user.username, "service_restarted", "service", data.service,
-                   None, request.client.host if request.client else None)
-        return {"status": "ok", "message": f"Service '{data.service}' wird neu gestartet"}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Timeout beim Neustart")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    from ami_client import run_ami_command
+    if not run_ami_command("core restart now"):
+        raise HTTPException(status_code=500, detail="Asterisk-Neustart via AMI fehlgeschlagen")
+
+    logger.info(f"Service asterisk restarted via AMI by {current_user.username}")
+    log_action(db, current_user.username, "service_restarted", "service", data.service,
+               None, request.client.host if request.client else None)
+    return {"status": "ok", "message": "Service 'asterisk' wird neu gestartet"}
 
 
 @router.post("/reboot")
@@ -812,84 +828,11 @@ def install_update(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Pull latest code from GitHub and rebuild containers."""
-    project_dir = "/project"
-
-    # Step 1: git pull
-    try:
-        pull_result = subprocess.run(
-            ["git", "pull", "origin", "main"],
-            capture_output=True, text=True, timeout=60,
-            cwd=project_dir,
-        )
-        if pull_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Git pull fehlgeschlagen: {pull_result.stderr}")
-        pull_output = pull_result.stdout.strip()
-        logger.info(f"Git pull by {current_user.username}: {pull_output}")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Timeout bei git pull")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Git pull Fehler: {str(e)}")
-
-    # Step 2: Regenerate manager.conf from template
-    try:
-        import os
-        ami_password = os.getenv("AMI_PASSWORD", "")
-        template_path = os.path.join(project_dir, "asterisk/config/manager.conf.template")
-        output_path = os.path.join(project_dir, "asterisk/config/manager.conf")
-        if os.path.exists(template_path) and ami_password:
-            with open(template_path) as f:
-                template = f.read()
-            with open(output_path, "w") as f:
-                f.write(template.replace("%%AMI_PASSWORD%%", ami_password))
-    except Exception as e:
-        logger.warning(f"manager.conf regeneration failed: {e}")
-
-    log_action(db, current_user.username, "update_installed", "system", None,
-               {"git_output": pull_output}, request.client.host if request.client else None)
-
-    # Step 3: Rebuild and restart containers.
-    # Running docker compose inside this container is unreliable because the
-    # backend container gets killed mid-rebuild. Instead, launch a short-lived
-    # helper container that survives the restart of all project containers.
-    import os
-    host_project_dir = os.getenv("PROJECT_DIR", "")
-
-    if host_project_dir:
-        try:
-            # Remove any leftover updater container
-            subprocess.run(
-                ["docker", "rm", "-f", "gonopbx-updater"],
-                capture_output=True, timeout=10,
-            )
-            subprocess.Popen(
-                [
-                    "docker", "run", "--rm", "-d",
-                    "--name", "gonopbx-updater",
-                    "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                    "-v", f"{host_project_dir}:{host_project_dir}",
-                    "-w", host_project_dir,
-                    "docker:cli",
-                    "sh", "-c", "sleep 3 && docker compose up -d --build",
-                ],
-                start_new_session=True,
-            )
-            return {"status": "ok", "message": "Update wird installiert. Die Seite wird in ca. 1-2 Minuten neu geladen."}
-        except Exception as e:
-            logger.warning(f"Helper container approach failed: {e}, trying direct approach")
-
-    # Fallback: run directly (may be interrupted when this container restarts)
-    try:
-        subprocess.Popen(
-            ["sh", "-c", "sleep 2 && docker compose up -d --build"],
-            start_new_session=True,
-            cwd=project_dir,
-        )
-        return {"status": "ok", "message": "Update wird installiert. Die Seite wird in ca. 1-2 Minuten neu geladen."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Container-Rebuild fehlgeschlagen: {str(e)}")
+    """Web-based self-update is disabled when docker.sock is not mounted."""
+    raise HTTPException(
+        status_code=400,
+        detail="Updates über die Weboberfläche sind deaktiviert (kein Docker-Socket gemountet). Bitte führe './install.sh' auf dem Host aus.",
+    )
 
 
 @router.get("/call-forwarding")

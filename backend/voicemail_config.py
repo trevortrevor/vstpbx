@@ -111,23 +111,10 @@ def write_voicemail_config(mailboxes: List[VoicemailMailbox], smtp_settings: Opt
 
 
 def reload_voicemail() -> bool:
-    """Reload Asterisk voicemail - copy config inside Asterisk container"""
-    try:
-        result = subprocess.run(
-            ['docker', 'exec', 'pbx_asterisk', 'sh', '-c',
-             'cp /etc/asterisk/custom/voicemail.conf /etc/asterisk/voicemail.conf && asterisk -rx "voicemail reload"'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode == 0:
-            logger.info("Asterisk voicemail reloaded successfully")
-            return True
-        else:
-            logger.error(f"Voicemail reload failed: {result.stderr}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Failed to reload voicemail: {e}")
-        return False
+    """Reload Asterisk voicemail via AMI"""
+    from ami_client import run_ami_command
+    if run_ami_command("voicemail reload"):
+        logger.info("Asterisk voicemail reloaded successfully via AMI")
+        return True
+    logger.error("Voicemail reload failed via AMI")
+    return False

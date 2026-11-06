@@ -60,24 +60,13 @@ def remove_acl_config() -> bool:
 
 
 def reload_acl() -> bool:
-    """Reload ACL module in Asterisk container."""
-    try:
-        result = subprocess.run(
-            ['docker', 'exec', 'pbx_asterisk', 'sh', '-c',
-             'cp /etc/asterisk/custom/acl.conf /etc/asterisk/acl.conf 2>/dev/null; asterisk -rx "module reload res_acl"'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            logger.info("Asterisk ACL reloaded successfully")
-            return True
-        else:
-            logger.error(f"ACL reload failed: {result.stderr}")
-            return False
-    except Exception as e:
-        logger.error(f"Failed to reload ACL: {e}")
-        return False
+    """Reload ACL module in Asterisk via AMI."""
+    from ami_client import run_ami_command
+    if run_ami_command("module reload res_acl"):
+        logger.info("Asterisk ACL reloaded successfully via AMI")
+        return True
+    logger.error("ACL reload failed via AMI")
+    return False
 
 
 def get_whitelist_settings() -> dict:

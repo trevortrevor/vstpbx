@@ -5,11 +5,64 @@ Handles connection and communication with Asterisk
 import asyncio
 import logging
 import os
+import socket
 from typing import Optional, Dict, Any
 from datetime import datetime
 from panoramisk import Manager
 
 logger = logging.getLogger(__name__)
+
+
+def run_ami_command(command: str, timeout: float = 10.0) -> bool:
+    """Execute a CLI command on Asterisk synchronously via AMI TCP socket."""
+    host = os.getenv("ASTERISK_HOST", "asterisk")
+    port = int(os.getenv("ASTERISK_PORT", 5038))
+    username = os.getenv("ASTERISK_USER", "admin")
+    password = os.getenv("ASTERISK_PASSWORD", "admin_secret")
+
+    def _read_packet(sock: socket.socket) -> str:
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        return buf.decode("utf-8", errors="replace")
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            # Read initial AMI greeting line
+            sock.recv(1024)
+
+            login_msg = (
+                f"Action: Login\r\n"
+                f"Username: {username}\r\n"
+                f"Secret: {password}\r\n"
+                f"Events: off\r\n\r\n"
+            )
+            sock.sendall(login_msg.encode("utf-8"))
+            login_resp = _read_packet(sock)
+            if "Response: Success" not in login_resp:
+                logger.error(f"AMI login failed for command '{command}': {login_resp.strip()}")
+                return False
+
+            cmd_msg = f"Action: Command\r\nCommand: {command}\r\n\r\n"
+            sock.sendall(cmd_msg.encode("utf-8"))
+            cmd_resp = _read_packet(sock)
+
+            try:
+                sock.sendall(b"Action: Logoff\r\n\r\n")
+            except Exception:
+                pass
+
+            if "Response: Success" in cmd_resp or "Response: Follows" in cmd_resp:
+                return True
+            logger.error(f"AMI command '{command}' failed: {cmd_resp.strip()}")
+            return False
+    except Exception as e:
+        logger.error(f"AMI command '{command}' error: {e}")
+        return False
 
 # Database import for CDR
 from database import SessionLocal, CDR

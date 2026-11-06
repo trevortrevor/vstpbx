@@ -6,13 +6,44 @@ Generates msmtprc config and writes it into the Asterisk container
 import base64
 import logging
 import os
-import subprocess
+import smtplib
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import encoders
 
 logger = logging.getLogger(__name__)
+
+MSMTP_CONFIG_PATH = "/etc/asterisk/custom/msmtprc"
+
+
+def _send_via_smtp(settings: dict, from_addr: str, to_address: str, raw_msg: str) -> bool:
+    """Send an RFC822 message string directly via Python smtplib."""
+    host = settings.get("smtp_host", "").strip()
+    port = int(settings.get("smtp_port") or 587)
+    tls = str(settings.get("smtp_tls", "true")).lower() in ("true", "1", "on", "yes")
+    user = settings.get("smtp_user", "").strip()
+    password = settings.get("smtp_password", "")
+
+    if not host:
+        logger.error("SMTP host is not configured")
+        return False
+
+    if tls and port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+            if user and password:
+                server.login(user, password)
+            server.sendmail(from_addr, [to_address], raw_msg.encode("utf-8"))
+    else:
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.ehlo()
+            if tls:
+                server.starttls()
+                server.ehlo()
+            if user and password:
+                server.login(user, password)
+            server.sendmail(from_addr, [to_address], raw_msg.encode("utf-8"))
+    return True
 
 
 def generate_msmtp_config(settings: dict) -> str:
@@ -48,50 +79,35 @@ password       {password}
 
 
 def write_msmtp_config(settings: dict) -> bool:
-    """Write msmtp config into the Asterisk container"""
+    """Write msmtp config to the shared Asterisk custom config volume"""
     try:
         config_content = generate_msmtp_config(settings)
-        result = subprocess.run(
-            ['docker', 'exec', '-i', 'pbx_asterisk', 'sh', '-c',
-             'cat > /etc/msmtprc && chmod 600 /etc/msmtprc'],
-            input=config_content,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            logger.info("msmtp config written to Asterisk container")
-            return True
-        else:
-            logger.error(f"Failed to write msmtp config: {result.stderr}")
-            return False
+        os.makedirs(os.path.dirname(MSMTP_CONFIG_PATH), exist_ok=True)
+        with open(MSMTP_CONFIG_PATH, "w") as f:
+            f.write(config_content)
+        os.chmod(MSMTP_CONFIG_PATH, 0o600)
+        logger.info("msmtp config written to shared volume")
+        return True
     except Exception as e:
         logger.error(f"Failed to write msmtp config: {e}")
         return False
 
 
 def send_test_email(settings: dict, to_address: str) -> bool:
-    """Send a test email via the Asterisk container"""
+    """Send a test email via SMTP"""
     from_addr = settings.get("smtp_from", "voicemail@gonopbx.local")
     subject = "VstPBX Test-E-Mail"
     body = "Dies ist eine Test-E-Mail von VstPBX. Die SMTP-Konfiguration funktioniert."
 
-    mail_content = f"To: {to_address}\nFrom: {from_addr}\nSubject: {subject}\n\n{body}\n"
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["To"] = to_address
+    msg["From"] = from_addr
+    msg["Subject"] = subject
 
     try:
-        result = subprocess.run(
-            ['docker', 'exec', '-i', 'pbx_asterisk', 'msmtp', '-t'],
-            input=mail_content,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            logger.info(f"Test email sent to {to_address}")
-            return True
-        else:
-            logger.error(f"Test email failed: {result.stderr}")
-            return False
+        _send_via_smtp(settings, from_addr, to_address, msg.as_string())
+        logger.info(f"Test email sent to {to_address}")
+        return True
     except Exception as e:
         logger.error(f"Failed to send test email: {e}")
         return False
@@ -101,7 +117,7 @@ LOGO_PATH = "/app/static/logo.png"
 
 
 def send_html_email(settings: dict, to_address: str, subject: str, html_body: str, inline_images: dict | None = None) -> bool:
-    """Send an HTML email via the Asterisk container.
+    """Send an HTML email via SMTP.
     inline_images: dict of {cid: filepath} for embedded images.
     """
     from_addr = settings.get("smtp_from", "noreply@gonopbx.local")
@@ -131,19 +147,9 @@ def send_html_email(settings: dict, to_address: str, subject: str, html_body: st
                 logger.warning(f"Inline image not found: {filepath}")
 
     try:
-        result = subprocess.run(
-            ['docker', 'exec', '-i', 'pbx_asterisk', 'msmtp', '-t'],
-            input=msg.as_string(),
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            logger.info(f"HTML email sent to {to_address}: {subject}")
-            return True
-        else:
-            logger.error(f"HTML email failed: {result.stderr}")
-            return False
+        _send_via_smtp(settings, from_addr, to_address, msg.as_string())
+        logger.info(f"HTML email sent to {to_address}: {subject}")
+        return True
     except Exception as e:
         logger.error(f"Failed to send HTML email: {e}")
         return False

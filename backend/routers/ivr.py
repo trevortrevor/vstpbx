@@ -384,17 +384,10 @@ async def upload_prompt(file: UploadFile = File(...), current_user: User = Depen
         if duration > MAX_DURATION_SECONDS:
             raise HTTPException(status_code=400, detail="Audio ist zu lang (max. 30 Sekunden)")
 
-        # Copy into Asterisk container
-        subprocess.run(['docker', 'exec', 'pbx_asterisk', 'sh', '-c', 'mkdir -p /var/lib/asterisk/sounds/custom'], check=False)
-        with open(output_path, "rb") as f:
-            wav_bytes = f.read()
-        proc = subprocess.run(
-            ['docker', 'exec', '-i', 'pbx_asterisk', 'sh', '-c', f'cat > /var/lib/asterisk/sounds/custom/{safe_base}.wav'],
-            input=wav_bytes,
-            capture_output=True,
-        )
-        if proc.returncode != 0:
-            raise HTTPException(status_code=500, detail="Konnte Audio nicht in Asterisk kopieren")
+        # Write to shared Asterisk custom sounds volume
+        custom_sounds_dir = "/var/lib/asterisk/sounds/custom"
+        os.makedirs(custom_sounds_dir, exist_ok=True)
+        shutil.copy2(output_path, os.path.join(custom_sounds_dir, f"{safe_base}.wav"))
 
         return JSONResponse({"prompt": f"custom/{safe_base}"})
     except HTTPException:

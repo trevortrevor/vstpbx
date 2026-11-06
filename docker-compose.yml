@@ -12,6 +12,7 @@ services:
       - ./asterisk/config:/etc/asterisk/custom
       - ./asterisk/logs:/var/log/asterisk
       - asterisk_voicemail:/var/spool/asterisk/voicemail
+      - asterisk_sounds:/var/lib/asterisk/sounds/custom
     healthcheck:
       test: ["CMD", "asterisk", "-rx", "core show version"]
       interval: 30s
@@ -21,7 +22,13 @@ services:
       - pbx_network
     command: >
       sh -c "
-        cp /etc/asterisk/custom/*.conf /etc/asterisk/ 2>/dev/null || true;
+        for f in pjsip.conf extensions.conf acl.conf queues.conf voicemail.conf; do
+          [ -f /etc/asterisk/custom/$$f ] || touch /etc/asterisk/custom/$$f;
+        done;
+        for f in /etc/asterisk/custom/*.conf; do
+          [ -e \"$$f\" ] && ln -sf \"$$f\" \"/etc/asterisk/$$(basename \"$$f\")\";
+        done;
+        ln -sf /etc/asterisk/custom/msmtprc /etc/msmtprc;
         /usr/sbin/asterisk -f
       "
 
@@ -49,8 +56,7 @@ services:
       - ./backend:/app
       - user_uploads:/app/uploads
       - asterisk_voicemail:/var/spool/asterisk/voicemail
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${PROJECT_DIR:-.}:/project
+      - asterisk_sounds:/var/lib/asterisk/sounds/custom
       - /var/lib/fail2ban:/var/lib/fail2ban:ro
       - /var/run/fail2ban/fail2ban.sock:/var/run/fail2ban/fail2ban.sock
     depends_on:
@@ -98,6 +104,7 @@ services:
 volumes:
   postgres_data:
   asterisk_voicemail:
+  asterisk_sounds:
   user_uploads:
 
 networks:

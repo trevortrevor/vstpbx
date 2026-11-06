@@ -275,24 +275,10 @@ def write_pjsip_config(peers: List[SIPPeer], trunks: List[SIPTrunk] = None, glob
         return False
 
 def reload_asterisk() -> bool:
-    """Reload Asterisk PJSIP - copy config inside Asterisk container"""
-    try:
-        # Kopiere die Config IM Asterisk-Container (nicht vom Backend aus)
-        result = subprocess.run(
-            ['docker', 'exec', 'pbx_asterisk', 'sh', '-c',
-             'cp /etc/asterisk/custom/pjsip.conf /etc/asterisk/pjsip.conf && asterisk -rx "pjsip reload"'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode == 0:
-            logger.info(f"Asterisk reloaded successfully")
-            return True
-        else:
-            logger.error(f"Reload failed: {result.stderr}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Failed to reload: {e}")
-        return False
+    """Reload Asterisk PJSIP via AMI"""
+    from ami_client import run_ami_command
+    if run_ami_command("pjsip reload"):
+        logger.info("Asterisk PJSIP reloaded successfully via AMI")
+        return True
+    logger.error("Asterisk PJSIP reload failed via AMI")
+    return False

@@ -66,26 +66,10 @@ def write_queues_config(groups: List[RingGroup]) -> bool:
 
 
 def reload_queues() -> bool:
-    """Reload Asterisk queues"""
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "exec",
-                "pbx_asterisk",
-                "sh",
-                "-c",
-                "cp /etc/asterisk/custom/queues.conf /etc/asterisk/queues.conf && asterisk -rx \"queue reload all\"",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            logger.info("Asterisk queues reloaded successfully")
-            return True
-        logger.error(f"Queue reload failed: {result.stderr}")
-        return False
-    except Exception as e:
-        logger.error(f"Failed to reload queues: {e}")
-        return False
+    """Reload Asterisk queues via AMI"""
+    from ami_client import run_ami_command
+    if run_ami_command("queue reload all"):
+        logger.info("Asterisk queues reloaded successfully via AMI")
+        return True
+    logger.error("Queue reload failed via AMI")
+    return False
