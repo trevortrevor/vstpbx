@@ -98,7 +98,7 @@ fi
 
 # Detect external IP
 echo "Detecting external IP address..."
-DETECTED_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || echo "")
+DETECTED_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || echo "")
 
 if [ -n "$DETECTED_IP" ]; then
     echo "Detected external IP: $DETECTED_IP"
