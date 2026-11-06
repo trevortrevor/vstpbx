@@ -62,7 +62,7 @@ def remove_acl_config() -> bool:
 def reload_acl() -> bool:
     """Reload ACL module in Asterisk via AMI."""
     from ami_client import run_ami_command
-    if run_ami_command("module reload res_acl"):
+    if run_ami_command("module reload acl"):
         logger.info("Asterisk ACL reloaded successfully via AMI")
         return True
     logger.error("ACL reload failed via AMI")

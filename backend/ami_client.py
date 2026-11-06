@@ -49,12 +49,26 @@ def run_ami_command(command: str, timeout: float = 10.0) -> bool:
 
             cmd_msg = f"Action: Command\r\nCommand: {command}\r\n\r\n"
             sock.sendall(cmd_msg.encode("utf-8"))
-            cmd_resp = _read_packet(sock)
+            is_restart = command.strip().startswith(("core restart", "core stop"))
+            try:
+                cmd_resp = _read_packet(sock)
+            except ConnectionResetError:
+                if is_restart:
+                    return True
+                raise
 
             try:
                 sock.sendall(b"Action: Logoff\r\n\r\n")
             except Exception:
                 pass
+
+            if is_restart and not cmd_resp.strip():
+                # Asterisk closes the AMI socket immediately upon executing 'core restart now'
+                return True
+
+            if "No such command" in cmd_resp or "No such module" in cmd_resp:
+                logger.error(f"AMI command '{command}' rejected: {cmd_resp.strip()}")
+                return False
 
             if "Response: Success" in cmd_resp or "Response: Follows" in cmd_resp:
                 return True

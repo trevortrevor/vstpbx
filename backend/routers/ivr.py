@@ -11,6 +11,8 @@ from datetime import datetime
 import logging
 import re
 import os
+import shutil
+import subprocess
 
 from database import get_db, IVRMenu, IVROption, SIPPeer, RingGroup, User, InboundRoute, CallForward, VoicemailMailbox, SIPTrunk
 from auth import get_current_user
@@ -355,19 +357,26 @@ async def upload_prompt(file: UploadFile = File(...), current_user: User = Depen
             raise HTTPException(status_code=400, detail="Datei ist zu groß (max. 10 MB)")
 
         safe_base = re.sub(r'[^a-zA-Z0-9_.-]+', '_', base)
-        input_path = os.path.join(PROMPT_DIR, f"{safe_base}{ext.lower()}")
+        input_path = os.path.join(PROMPT_DIR, f".upload_{safe_base}{ext.lower()}")
         output_path = os.path.join(PROMPT_DIR, f"{safe_base}.wav")
         with open(input_path, "wb") as f:
             f.write(content)
 
-        # Convert to 8kHz mono WAV for Asterisk
-        import subprocess
-        conv = subprocess.run(
-            ["ffmpeg", "-y", "-i", input_path, "-ar", "8000", "-ac", "1", "-c:a", "pcm_s16le", output_path],
-            capture_output=True,
-        )
-        if conv.returncode != 0:
-            raise HTTPException(status_code=500, detail="Audio-Konvertierung fehlgeschlagen")
+        try:
+            # Convert to 8kHz mono WAV for Asterisk
+            conv = subprocess.run(
+                ["ffmpeg", "-y", "-i", input_path, "-ar", "8000", "-ac", "1", "-c:a", "pcm_s16le", output_path],
+                capture_output=True,
+                text=True,
+            )
+            if conv.returncode != 0:
+                logger.error(f"FFmpeg conversion failed: {conv.stderr}")
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                raise HTTPException(status_code=500, detail="Audio-Konvertierung fehlgeschlagen")
+        finally:
+            if os.path.exists(input_path):
+                os.remove(input_path)
 
         # Validate duration
         probe = subprocess.run(
@@ -376,12 +385,16 @@ async def upload_prompt(file: UploadFile = File(...), current_user: User = Depen
             text=True,
         )
         if probe.returncode != 0:
+            if os.path.exists(output_path):
+                os.remove(output_path)
             raise HTTPException(status_code=500, detail="Audio-Analyse fehlgeschlagen")
         try:
             duration = float(probe.stdout.strip())
         except Exception:
             duration = 0.0
         if duration > MAX_DURATION_SECONDS:
+            if os.path.exists(output_path):
+                os.remove(output_path)
             raise HTTPException(status_code=400, detail="Audio ist zu lang (max. 30 Sekunden)")
 
         # Write to shared Asterisk custom sounds volume
