@@ -29,8 +29,9 @@ services:
     build: ./backend
     container_name: pbx_backend
     restart: unless-stopped
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
+    # Backend only needs to be reachable internally via the frontend nginx proxy
+    # ports:
+    #   - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://asterisk:${DB_PASSWORD}@postgres:5432/asterisk_gui
