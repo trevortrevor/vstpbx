@@ -185,9 +185,11 @@ if [ -f .env ]; then
         echo "============================================"
         echo ""
         if [ "$BIND_ADDRESS" = "0.0.0.0" ] && [ -n "$LOCAL_IP" ]; then
-            echo "  Web GUI:    http://${LOCAL_IP}:3000"
+            echo "  Web GUI:    http://${LOCAL_IP}:${FRONTEND_PORT:-3000}"
+            echo "  API:        http://${LOCAL_IP}:${BACKEND_PORT:-8000}"
         else
-            echo "  Web GUI:    http://localhost:3000"
+            echo "  Web GUI:    http://localhost:${FRONTEND_PORT:-3000}"
+            echo "  API:        http://localhost:${BACKEND_PORT:-8000}"
         fi
         echo ""
         if [ "$INSTALL_LANG" = "de" ]; then
@@ -269,6 +271,29 @@ else
         echo "-> Bind: 0.0.0.0 (network access enabled)"
     fi
 fi
+
+# Frontend & Backend ports
+echo ""
+if [ "$INSTALL_LANG" = "de" ]; then
+    echo "Port fuer die Weboberflaeche / Frontend (Standard: 3000)"
+    read -rp "Frontend-Port [3000]: " FRONTEND_PORT
+else
+    echo "Port for the Web GUI / Frontend (default: 3000)"
+    read -rp "Frontend port [3000]: " FRONTEND_PORT
+fi
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+echo "-> Frontend-Port: $FRONTEND_PORT"
+
+echo ""
+if [ "$INSTALL_LANG" = "de" ]; then
+    echo "Port fuer das Backend / API (Standard: 8000)"
+    read -rp "Backend-Port [8000]: " BACKEND_PORT
+else
+    echo "Port for the Backend / API (default: 8000)"
+    read -rp "Backend port [8000]: " BACKEND_PORT
+fi
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+echo "-> Backend-Port: $BACKEND_PORT"
 
 # SIP port
 echo ""
@@ -376,6 +401,8 @@ ENVEOF
     printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
     printf 'AMI_PASSWORD=%s\n' "$AMI_PASSWORD"
     printf 'BIND_ADDRESS=%s\n' "$BIND_ADDRESS"
+    printf 'FRONTEND_PORT=%s\n' "$FRONTEND_PORT"
+    printf 'BACKEND_PORT=%s\n' "$BACKEND_PORT"
     printf 'SIP_PORT=%s\n' "$SIP_PORT"
     printf 'PROJECT_DIR=%s\n' "$(pwd)"
     printf 'UI_LANG=%s\n' "${UI_LANG}"
@@ -424,23 +451,23 @@ echo "============================================"
 echo ""
 if [ "$BIND_ADDRESS" = "0.0.0.0" ]; then
     ACCESS_IP="${LOCAL_IP:-$EXTERNAL_IP}"
-    echo "  Web GUI:    http://${ACCESS_IP}:3000"
-    echo "  API:        http://${ACCESS_IP}:8000"
+    echo "  Web GUI:    http://${ACCESS_IP}:${FRONTEND_PORT}"
+    echo "  API:        http://${ACCESS_IP}:${BACKEND_PORT}"
     if [ -n "$LOCAL_IP" ] && [ "$LOCAL_IP" != "$EXTERNAL_IP" ]; then
         echo ""
         if [ "$INSTALL_LANG" = "de" ]; then
-            echo "  Lokales Netzwerk: http://${LOCAL_IP}:3000"
-            echo "  Extern:           http://${EXTERNAL_IP}:3000"
-            echo "                     (Port 3000 muss im Router freigegeben sein)"
+            echo "  Lokales Netzwerk: http://${LOCAL_IP}:${FRONTEND_PORT}"
+            echo "  Extern:           http://${EXTERNAL_IP}:${FRONTEND_PORT}"
+            echo "                     (Port ${FRONTEND_PORT} muss im Router freigegeben sein)"
         else
-            echo "  Local network:    http://${LOCAL_IP}:3000"
-            echo "  External:         http://${EXTERNAL_IP}:3000"
-            echo "                     (Port 3000 must be forwarded on your router)"
+            echo "  Local network:    http://${LOCAL_IP}:${FRONTEND_PORT}"
+            echo "  External:         http://${EXTERNAL_IP}:${FRONTEND_PORT}"
+            echo "                     (Port ${FRONTEND_PORT} must be forwarded on your router)"
         fi
     fi
 else
-    echo "  Web GUI:    http://localhost:3000"
-    echo "  API:        http://localhost:8000"
+    echo "  Web GUI:    http://localhost:${FRONTEND_PORT}"
+    echo "  API:        http://localhost:${BACKEND_PORT}"
     if [ "$INSTALL_LANG" = "de" ]; then
         echo "  (Reverse Proxy noetig fuer externen Zugriff)"
     else
